@@ -51,6 +51,10 @@ export interface ArticleRow {
   lang: string | null;
   country_iso: string | null;
   dedup_group_id: string | null;
+  /** Added 0008. Display-only publisher name/domain, distinct from source_id (the
+   * licensing/data-provenance source — e.g. 'gdelt'). See that migration's comment. */
+  publisher_domain: string | null;
+  publisher_name: string | null;
 }
 
 // ── events (0002) ─────────────────────────────────────────────────────────────

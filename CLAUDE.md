@@ -11,6 +11,14 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 3. **Market data source additions require a licence check first.** Before wiring up a new asset in `src/fetch/`, confirm its `licenseClass` against the table in the app repo's `docs/ARCHITECTURE.md`. NASDAQ and NIFTY are `red` — do not add them without an explicit licensing decision.
 4. **Never hand-edit `data/weights.json`** once it exists (Phase 4) — it's fit by the backtest harness against 6 months of GDELT history. Changing scoring behavior means re-running the backtest, not hand-tuning a number.
 
+## GDELT ingestion gotchas (found the hard way in Phase 2)
+
+- **The bulk Events/Mentions files have no article title field at all.** Don't go looking for one — the DOC 2.0 API (`src/fetch/gdeltDoc.ts`) is the only GDELT source for headline text; the bulk Events export (`src/fetch/gdeltEvents.ts`) is structured actor/CAMEO/geo data only, with `SOURCEURL` being the article that triggered ONE specific event's creation, not an aggregate of coverage.
+- **Don't hit `api.gdeltproject.org` (the DOC API) repeatedly during development.** It throttles hard and the block outlasted several minutes of spaced-out retries during Phase 2 — plausibly IP-level, not strictly per-request. `gdeltDoc.ts`'s built-in `MIN_REQUEST_INTERVAL_MS` throttle is a real production safeguard, not just courtesy for dev.
+- **`lastupdate.txt` (`data.gdeltproject.org`) is the correct bulk-polling path** and was NOT throttled the same way — use it for Events/Mentions/GKG, reserve the DOC API for title search specifically.
+- **SimHash alone is too noisy for headline-length dedup — confirmed by measurement, not assumed.** See `src/dedupe/cascade.ts`'s top comment for the actual numbers (a single-word swap in a real headline pair measured Hamming distance 11-24/64 bits, overlapping with unrelated-headline distances of 22-31). Stage 2 of the cascade is now normalized-token Jaccard similarity; `titleSimHash`/`hammingDistance` are kept for cheap candidate-bucketing at scale, not as the precision signal. If you're tempted to "simplify" the cascade back to a raw SimHash threshold, re-read that comment first.
+- **`sourcecountry` in the DOC API response is a country NAME ("United States"), not an ISO code** — don't map it into `country_iso` without a real gazetteer; `mapGdeltArticle.ts` deliberately leaves it null rather than guess.
+
 ## Schema changes
 
 `migrations/*.sql` is the single source of truth for the D1 schema — numbered, applied in order, never edited after being committed (add a new migration instead, same as any real migration system). Three independent places currently mirror parts of it and must be kept in sync by hand whenever it changes (no shared source of truth across the language boundary):
