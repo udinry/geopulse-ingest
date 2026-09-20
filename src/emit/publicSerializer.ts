@@ -63,6 +63,29 @@ export interface PublicAsset {
   } | null;
 }
 
+export interface PublicSearchResult {
+  id: string;
+  title: string;
+  category: SituationRow["category"];
+  trendingScore: number;
+}
+
+export interface PublicAssetSearchResult {
+  id: string;
+  symbol: string;
+  name: string;
+  assetClass: AssetRow["class"];
+  score: number;
+}
+
+export function serializeAssetSearchResult(row: Pick<AssetRow, "id" | "symbol" | "name" | "class">, score: number): PublicAssetSearchResult {
+  return { id: row.id, symbol: row.symbol, name: row.name, assetClass: row.class, score };
+}
+
+export function serializeSearchResult(row: Pick<SituationRow, "id" | "title" | "category" | "trending_score">): PublicSearchResult {
+  return { id: row.id, title: row.title, category: row.category, trendingScore: row.trending_score };
+}
+
 export interface SituationDetail extends PublicSituation {
   events: PublicEvent[];
   news: PublicNews[];

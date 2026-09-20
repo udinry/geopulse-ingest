@@ -43,6 +43,10 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 - `src/emit/publicSerializer.ts` is the de-branding boundary. Never spread an `OutlookMarketRow` into a response; `serializeOutlook` is intentionally field-by-field and strips venue, slug, URL, ticker, and source-volume details.
 - `src/api/handler.ts` is runtime-neutral and tested with a small query interface. `src/api/worker.ts` is the only Cloudflare/D1 adapter. Keep SQL and Worker globals out of serializers so contract tests stay fast and deterministic.
 - Actual Cloudflare deployment still needs a real D1 database/account binding. Do not commit a fabricated database ID or create an external account autonomously; record that as a blocker in `GeoPulse/PLAN.md` until the owner supplies it.
+- Alert persistence is device-scoped through `X-Device-ID`; it is not an account or identity system. APNs delivery runs from the Worker scheduled hook and requires `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, and `APNS_TOPIC` secrets.
+- Outlook matching is deterministic token/category overlap only. `src/emit/publicSerializer.ts` remains the enforcement boundary: internal venue, slug, and URL fields must never enter a public response.
+- Market adapters must be selected from a licensed asset row's `data_source`; `BinanceMarketSource` is currently the only implemented live adapter and only returns source-stamped crypto quotes.
+- `src/markets/ingest.ts` is the runtime-neutral quote ingestion stage. It deliberately does not create a database connection or cron runner; the deployment-owned runner supplies the `Queryable` and EIA secret.
 
 ## Schema changes
 

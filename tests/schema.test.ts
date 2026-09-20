@@ -32,7 +32,7 @@ describe("schema migrations apply cleanly", () => {
       [
         "alert_deliveries", "alerts", "articles", "asset_prices", "assets",
         "devices", "entities", "event_articles", "events", "ingest_runs",
-        "outlook_markets", "score_history", "situation_assets", "situation_entities",
+         "outlook_controls", "outlook_markets", "score_history", "situation_assets", "situation_entities",
         "situation_events", "situation_outlook", "situations", "sources",
       ].sort()
     );
