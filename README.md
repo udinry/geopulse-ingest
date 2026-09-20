@@ -29,8 +29,9 @@ migrations/    numbered SQLite/D1 schema migrations — the single source of tru
 data/          the licensing register: sources.seed.json + assets.seed.json. Every row
                has a dated terms_reviewed_at citation — "zero unreviewed sources" is
                enforced by tests/schema.test.ts, not just a convention. Also where
-               gazetteer/CAMEO/geo-significance tables and the calibrated weights.json
-               land once Phase 2+ builds them.
+                gazetteer/CAMEO/geo-significance tables and the scoring weights.json
+                land once their owning phases build them (Phase 4's current file is
+                explicitly an uncalibrated bootstrap prior).
 src/
   shared/      TS row-shape contracts (types.ts), 1:1 with migrations/*.sql
   fetch/       gdeltEvents.ts (bulk Events 2.0 real-time polling), gdeltDoc.ts (DOC 2.0

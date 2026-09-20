@@ -9,7 +9,7 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 1. **No AI.** Dedup, clustering, scoring, matching are all deterministic rules — see each module's doc comments for the exact algorithm and its citation in the planning doc.
 2. **The de-branding boundary is enforced here, at emit time.** `src/emit/` must never serialize a venue name, slug, URL, or ticker for an outlook entry into anything that reaches the read API / client. This is the actual enforcement point for the contract described in the app repo's `docs/ARCHITECTURE.md` — the client-side `OutlookIndicator` type having no such field is the second line of defense, not the first.
 3. **Market data source additions require a licence check first.** Before wiring up a new asset in `src/fetch/`, confirm its `licenseClass` against the table in the app repo's `docs/ARCHITECTURE.md`. NASDAQ and NIFTY are `red` — do not add them without an explicit licensing decision.
-4. **Never hand-edit `data/weights.json`** once it exists (Phase 4) — it's fit by the backtest harness against 6 months of GDELT history. Changing scoring behavior means re-running the backtest, not hand-tuning a number.
+4. **Never hand-edit `data/weights.json`** once calibration exists — it's fit by the backtest harness against the six-month historical dataset. The committed Phase 4 file is explicitly an uncalibrated bootstrap prior; changing scoring behavior means running the harness, not hand-tuning a number.
 
 ## GDELT ingestion gotchas (found the hard way in Phase 2)
 
@@ -26,6 +26,12 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 - **`categoryCompat.ts` uses a 3-pillar model (geopolitical/economic/physical), not a hand-curated 19x19 category-pair matrix** — deliberately, to avoid fabricated-looking precision across 361 mostly-arbitrary numbers. See its doc comment.
 - **`updateSituationWithEvent`'s `sourceCount` is a running max across joined events, not a sum** — summing would double-count outlets that report on multiple developments within the same situation. This is a conservative proxy pending Phase 5's real distinct-source count from joined article data.
 - **Split (an over-merged situation separating back into two) is NOT implemented.** Only merge is. See the README's Phase 3 scope note for why this is a reasoned deferral, not an oversight.
+
+## Scoring gotchas (Phase 4)
+
+- `src/score/labelSet.ts` uses the planning document's strict movement thresholds (`>2σ` and `>15` percentage points) and inclusive coverage thresholds (`≥72h` and `≥30` sources). A major label requires at least two of the three criteria.
+- `src/score/gridSearch.ts` enumerates the complete five-weight simplex. Its default resolution is `0.05`; it intentionally retains the first candidate on an NDCG tie so calibration is deterministic.
+- `data/weights.json` is not a calibration result. It contains the documented bootstrap prior with `calibrated: false` because no six-month production-compatible corpus was fabricated or downloaded irresponsibly. Do not present these weights as empirically fitted.
 
 ## Schema changes
 

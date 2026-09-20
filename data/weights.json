@@ -1,0 +1,11 @@
+{
+  "calibrated": false,
+  "note": "Bootstrap prior only. Real calibration requires the planned six-month production-compatible historical dataset and must be run before claiming calibrated weights.",
+  "weights": {
+    "newsVelocity": 0.25,
+    "sourceConfirmation": 0.2,
+    "severity": 0.3,
+    "marketMovement": 0.15,
+    "outlookMovement": 0.1
+  }
+}
