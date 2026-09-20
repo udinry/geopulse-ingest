@@ -50,10 +50,10 @@ src/
                similarity.ts (the weighted 4-term formula), cluster.ts
                (join/create/merge decisions + map-visibility gating),
                categoryCompat.ts, geoProximity.ts, entitySignature.ts
-  score/       trending-score computation + calibration harness (Phase 4)
+   score/       trending-score computation + calibration harness (Phase 4)
+   api/         Worker-compatible read handler and D1 adapter (Phase 5)
+   emit/        public serializers and deterministic JSON snapshots (Phase 5)
   link/        situation↔asset and situation↔outlook matching (Phase 10, 13)
-  emit/        D1 writes + R2 snapshot generation (Phase 5) — this is where the
-               de-branding contract's actual enforcement code lives once built
 tests/         schema.test.ts applies migrations/*.sql via the system sqlite3 CLI to a
                throwaway file (no native driver dep — same SQL dialect as D1, so this
                is a real portability check, not a mock). tests/fixtures/ holds a real,

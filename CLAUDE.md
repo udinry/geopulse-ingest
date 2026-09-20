@@ -11,6 +11,11 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 3. **Market data source additions require a licence check first.** Before wiring up a new asset in `src/fetch/`, confirm its `licenseClass` against the table in the app repo's `docs/ARCHITECTURE.md`. NASDAQ and NIFTY are `red` — do not add them without an explicit licensing decision.
 4. **Never hand-edit `data/weights.json`** once calibration exists — it's fit by the backtest harness against the six-month historical dataset. The committed Phase 4 file is explicitly an uncalibrated bootstrap prior; changing scoring behavior means running the harness, not hand-tuning a number.
 
+## Handover discipline
+
+- The sibling `GeoPulse/PLAN.md` is a live handover document. Update its phase table and handover block at the start of work, during meaningful progress, and at phase completion with exact commits, verification, CI links, blockers, and next steps.
+- Never leave an in-progress phase documented only in the conversation; another agent must be able to resume from the repositories cold.
+
 ## GDELT ingestion gotchas (found the hard way in Phase 2)
 
 - **The bulk Events/Mentions files have no article title field at all.** Don't go looking for one — the DOC 2.0 API (`src/fetch/gdeltDoc.ts`) is the only GDELT source for headline text; the bulk Events export (`src/fetch/gdeltEvents.ts`) is structured actor/CAMEO/geo data only, with `SOURCEURL` being the article that triggered ONE specific event's creation, not an aggregate of coverage.
@@ -32,6 +37,12 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 - `src/score/labelSet.ts` uses the planning document's strict movement thresholds (`>2σ` and `>15` percentage points) and inclusive coverage thresholds (`≥72h` and `≥30` sources). A major label requires at least two of the three criteria.
 - `src/score/gridSearch.ts` enumerates the complete five-weight simplex. Its default resolution is `0.05`; it intentionally retains the first candidate on an NDCG tie so calibration is deterministic.
 - `data/weights.json` is not a calibration result. It contains the documented bootstrap prior with `calibrated: false` because no six-month production-compatible corpus was fabricated or downloaded irresponsibly. Do not present these weights as empirically fitted.
+
+## API gotchas (Phase 5)
+
+- `src/emit/publicSerializer.ts` is the de-branding boundary. Never spread an `OutlookMarketRow` into a response; `serializeOutlook` is intentionally field-by-field and strips venue, slug, URL, ticker, and source-volume details.
+- `src/api/handler.ts` is runtime-neutral and tested with a small query interface. `src/api/worker.ts` is the only Cloudflare/D1 adapter. Keep SQL and Worker globals out of serializers so contract tests stay fast and deterministic.
+- Actual Cloudflare deployment still needs a real D1 database/account binding. Do not commit a fabricated database ID or create an external account autonomously; record that as a blocker in `GeoPulse/PLAN.md` until the owner supplies it.
 
 ## Schema changes
 
