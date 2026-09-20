@@ -11,6 +11,22 @@ Read [`../GeoPulse/docs/ARCHITECTURE.md`](../GeoPulse/docs/ARCHITECTURE.md) for 
 3. **Market data source additions require a licence check first.** Before wiring up a new asset in `src/fetch/`, confirm its `licenseClass` against the table in the app repo's `docs/ARCHITECTURE.md`. NASDAQ and NIFTY are `red` — do not add them without an explicit licensing decision.
 4. **Never hand-edit `data/weights.json`** once it exists (Phase 4) — it's fit by the backtest harness against 6 months of GDELT history. Changing scoring behavior means re-running the backtest, not hand-tuning a number.
 
+## Schema changes
+
+`migrations/*.sql` is the single source of truth for the D1 schema — numbered, applied in order, never edited after being committed (add a new migration instead, same as any real migration system). Three independent places currently mirror parts of it and must be kept in sync by hand whenever it changes (no shared source of truth across the language boundary):
+- `src/shared/types.ts` (this repo) — row-shape contracts
+- `../GeoPulse/Packages/GeoPulseKit/Sources/GeoPulseKit/Models/*.swift` — client-side domain types
+- `EventCategory`'s value list specifically appears a third time as a SQL `CHECK` constraint in `migrations/0002_events.sql` and `0003_situations.sql`
+
+`tests/schema.test.ts` is the actual verification: it applies every migration via the real `sqlite3` CLI (not a mock — D1 is the same SQL dialect) and round-trips seeded data through real joins, including a query-level check that the outlook de-branding contract holds (a query selecting only public-safe columns must never expose `venue`/`slug`/`url`).
+
+## The licensing register (`data/*.seed.json`)
+
+Every row in `sources.seed.json` and `assets.seed.json` carries a real, dated `terms_reviewed_at` and a `terms_url` a human can re-check — `tests/schema.test.ts` enforces this isn't just a convention (a source missing either fails the test). Before adding a row:
+1. Actually check that source/asset's current terms — don't assume a prior general research pass still holds.
+2. Confirm `license_class` against `../GeoPulse/docs/ARCHITECTURE.md`'s table.
+3. For market assets: it must not be `equity` or `index` class while `green` — those are structurally NASDAQ/NIFTY-shaped and there is no free commercial licence for them (see docs/ARCHITECTURE.md §10.1). The test suite checks this invariant.
+
 ## Why this repo is separate and public
 
 GitHub Actions gives unlimited minutes on public repos vs. 2,000 min/month on private — at 5–15 minute ingestion cadence, a private repo rides that quota edge. See the app repo's `docs/ARCHITECTURE.md` for the full reasoning, including why Cloudflare Workers' free tier (10ms CPU/invocation) can't run this pipeline.

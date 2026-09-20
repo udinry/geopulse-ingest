@@ -1,0 +1,122 @@
+{
+  "_comment": "The market-data licensing register. Every asset here is 'green' — free to display and redistribute commercially, verified against the actual source's terms, not just 'the API has a free tier'. See docs/ARCHITECTURE.md's market-data table and planning doc §10.1/§1.2 for the full research. Do NOT add NASDAQ, NIFTY, or individual equities here without an explicit licensing decision — CLAUDE.md non-negotiable #4. This file seeds the assets table; asset_prices are populated by the Phase 2+ fetch pipeline, not here.",
+  "assets": [
+    {
+      "id": "btc-usdt",
+      "symbol": "BTCUSDT",
+      "name": "Bitcoin",
+      "class": "crypto",
+      "exchange": "Binance",
+      "currency": "USD",
+      "country_iso": null,
+      "data_source": "binance",
+      "license_class": "green",
+      "is_delayed": false,
+      "delay_minutes": 0,
+      "_citation": "Binance publishes its own order book on a keyless public endpoint (data-api.binance.vision) — no third-party licence chain."
+    },
+    {
+      "id": "eth-usdt",
+      "symbol": "ETHUSDT",
+      "name": "Ethereum",
+      "class": "crypto",
+      "exchange": "Binance",
+      "currency": "USD",
+      "country_iso": null,
+      "data_source": "binance",
+      "license_class": "green",
+      "is_delayed": false,
+      "delay_minutes": 0
+    },
+    {
+      "id": "paxg-usdt",
+      "symbol": "PAXGUSDT",
+      "name": "Gold (PAXG)",
+      "class": "commodity",
+      "exchange": "Binance",
+      "currency": "USD",
+      "country_iso": null,
+      "data_source": "binance",
+      "license_class": "green",
+      "is_delayed": false,
+      "delay_minutes": 0,
+      "_citation": "PAX Gold is 1:1 redeemable for LBMA-grade gold held in Paxos custody; arbitrage holds it to spot. Real-time and 24/7, unlike the LBMA's own twice-daily fix — see docs/ARCHITECTURE.md. Labeled honestly as tokenised gold, never as 'LBMA Gold'."
+    },
+    {
+      "id": "eur-usd",
+      "symbol": "EURUSD",
+      "name": "Euro / US Dollar",
+      "class": "fx",
+      "exchange": null,
+      "currency": "USD",
+      "country_iso": null,
+      "data_source": "ecb_frankfurter",
+      "license_class": "green",
+      "is_delayed": true,
+      "delay_minutes": 1440,
+      "_citation": "ECB reference rates via the Frankfurter API — open, keyless, commercial reuse permitted. Daily reference rate, not an intraday interbank feed; the app must render this with a 'ECB ref, <time>' cadence label (see FreshnessLabel), never as live."
+    },
+    {
+      "id": "gbp-usd",
+      "symbol": "GBPUSD",
+      "name": "British Pound / US Dollar",
+      "class": "fx",
+      "exchange": null,
+      "currency": "USD",
+      "country_iso": null,
+      "data_source": "ecb_frankfurter",
+      "license_class": "green",
+      "is_delayed": true,
+      "delay_minutes": 1440
+    },
+    {
+      "id": "usd-jpy",
+      "symbol": "USDJPY",
+      "name": "US Dollar / Japanese Yen",
+      "class": "fx",
+      "exchange": null,
+      "currency": "JPY",
+      "country_iso": null,
+      "data_source": "ecb_frankfurter",
+      "license_class": "green",
+      "is_delayed": true,
+      "delay_minutes": 1440
+    },
+    {
+      "id": "wti-crude",
+      "symbol": "WTI",
+      "name": "WTI Crude Oil",
+      "class": "commodity",
+      "exchange": null,
+      "currency": "USD",
+      "country_iso": "US",
+      "data_source": "eia",
+      "license_class": "green",
+      "is_delayed": true,
+      "delay_minutes": 1440,
+      "_citation": "US EIA spot prices — public domain (US Govt work). Daily official spot, not CME intraday futures (which are licensed) — render with an 'EIA daily' cadence label."
+    },
+    {
+      "id": "brent-crude",
+      "symbol": "BRENT",
+      "name": "Brent Crude Oil",
+      "class": "commodity",
+      "exchange": null,
+      "currency": "USD",
+      "country_iso": null,
+      "data_source": "eia",
+      "license_class": "green",
+      "is_delayed": true,
+      "delay_minutes": 1440
+    }
+  ],
+  "_deferred_gap": [
+    "US macro releases (CPI, jobs, GDP — category J/macroDataRelease) don't fit the",
+    "assets/asset_prices shape cleanly: they're periodic index-value releases, not",
+    "continuous quotes, and FRED's licence is per-series (public-domain BLS/BEA/Fed",
+    "origin only, per docs/ARCHITECTURE.md). Left out of this seed rather than forced",
+    "into the wrong shape — Phase 10 (Market adapter + Markets tab) needs to decide",
+    "whether these get a dedicated 'macro_releases' table or reuse assets with a new",
+    "'macro' class. Flagged here rather than solved prematurely."
+  ]
+}

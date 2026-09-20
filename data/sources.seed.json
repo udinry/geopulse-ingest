@@ -1,0 +1,58 @@
+{
+  "_comment": "The licensing register for news/event sources. Every row here has an actual reviewed terms_reviewed_at date and a terms_url a human can re-check. CLAUDE.md non-negotiable: do not add a source without this review — 'zero unreviewed sources' is Phase 1's Definition of Done. See GeoPulse/docs/planning/2026-09-20-initial-plan.md §10 for the full research this is drawn from.",
+  "sources": [
+    {
+      "id": "gdelt",
+      "name": "GDELT Project",
+      "domain": "gdeltproject.org",
+      "feed_url": "https://api.gdeltproject.org/api/v2/doc/doc",
+      "kind": "gdelt",
+      "credibility_tier": 1,
+      "license_class": "green",
+      "excerpt_allowed": false,
+      "attribution_text": "Powered in part by the GDELT Project",
+      "attribution_url": "https://www.gdeltproject.org/",
+      "terms_url": "https://www.gdeltproject.org/about.html",
+      "terms_reviewed_at": "2026-09-20",
+      "is_active": true
+    },
+    {
+      "id": "usgs-earthquakes",
+      "name": "USGS Earthquake Hazards Program",
+      "domain": "earthquake.usgs.gov",
+      "feed_url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson",
+      "kind": "government",
+      "credibility_tier": 1,
+      "license_class": "green",
+      "excerpt_allowed": false,
+      "attribution_text": "U.S. Geological Survey",
+      "attribution_url": "https://earthquake.usgs.gov/",
+      "terms_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+      "terms_reviewed_at": "2026-09-20",
+      "is_active": true
+    },
+    {
+      "id": "gdacs",
+      "name": "Global Disaster Alert and Coordination System",
+      "domain": "gdacs.org",
+      "feed_url": "https://www.gdacs.org/xml/rss.xml",
+      "kind": "government",
+      "credibility_tier": 1,
+      "license_class": "green",
+      "excerpt_allowed": false,
+      "attribution_text": "GDACS (a joint initiative of the European Commission and the UN)",
+      "attribution_url": "https://www.gdacs.org/",
+      "terms_url": "https://www.gdacs.org/about/about.aspx",
+      "terms_reviewed_at": "2026-09-20",
+      "is_active": true
+    }
+  ],
+  "_not_yet_seeded": [
+    "Major-publisher RSS (Reuters, AP, BBC, etc.) is explicitly deferred, not merely",
+    "unresearched: Reuters discontinued public RSS ~2020, AP's public feeds are",
+    "unreliable, and most mainstream RSS terms of use exclude commercial reuse (see",
+    "planning doc §10, §1.4). Any publisher added here in a later phase needs its own",
+    "dated terms_reviewed_at citation, same as the rows above — do not bulk-add a",
+    "publisher list without that review per source."
+  ]
+}

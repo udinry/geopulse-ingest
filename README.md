@@ -21,15 +21,29 @@ npm test
 ## Layout
 
 ```
+migrations/    numbered SQLite/D1 schema migrations — the single source of truth for
+               every table. Apply in order (0001, 0002, ...); see tests/schema.test.ts
+               for how, and docs/ARCHITECTURE.md for the outlook table's de-branding
+               contract, which this schema enforces structurally (venue/slug/url only
+               ever live in outlook_markets, never in a serialized shape).
+data/          the licensing register: sources.seed.json + assets.seed.json. Every row
+               has a dated terms_reviewed_at citation — "zero unreviewed sources" is
+               enforced by tests/schema.test.ts, not just a convention. Also where
+               gazetteer/CAMEO/geo-significance tables and the calibrated weights.json
+               land once Phase 2+ builds them.
 src/
+  shared/      TS row-shape contracts (types.ts), 1:1 with migrations/*.sql
   fetch/       source polling — GDELT, RSS allowlist, Polymarket Gamma, market data adapters (Phase 2+)
   normalize/   canonical URL, entity resolution (canonicalUrl.ts is the dedup cascade's stage 1)
   dedupe/      SimHash + entity-overlap dedup cascade (titleSimHash.ts is stage 2)
   cluster/     incremental situation clustering (Phase 3)
   score/       trending-score computation + calibration harness (Phase 4)
   link/        situation↔asset and situation↔outlook matching (Phase 10, 13)
-  emit/        D1 writes + R2 snapshot generation (Phase 5)
-data/          gazetteer, CAMEO tables, geo-significance weights, calibrated weights.json (populated Phase 2+)
+  emit/        D1 writes + R2 snapshot generation (Phase 5) — this is where the
+               de-branding contract's actual enforcement code lives once built
+tests/         schema.test.ts applies migrations/*.sql via the system sqlite3 CLI to a
+               throwaway file (no native driver dep — same SQL dialect as D1, so this
+               is a real portability check, not a mock)
 ```
 
 ## Known and accepted: dev-dependency vulnerabilities
