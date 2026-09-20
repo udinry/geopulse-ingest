@@ -1,0 +1,21 @@
+{
+  "name": "geopulse-ingest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GeoPulse ingestion backend — GDELT/RSS fetch, dedupe, cluster, score, emit. Runs on GitHub Actions cron. See docs/ARCHITECTURE.md in the GeoPulse app repo for the full rationale.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "echo 'lint: not yet configured (Phase 2)' && exit 0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.9",
+    "@types/node": "^20.16.5"
+  }
+}
