@@ -45,7 +45,10 @@ src/
                important correction made during Phase 2: stage 2 is token-Jaccard
                similarity, not a raw SimHash Hamming threshold; SimHash is noisy at
                headline length, confirmed by measurement, not assumed)
-  cluster/     incremental situation clustering (Phase 3)
+  cluster/     incremental single-link situation clustering (Phase 3):
+               similarity.ts (the weighted 4-term formula), cluster.ts
+               (join/create/merge decisions + map-visibility gating),
+               categoryCompat.ts, geoProximity.ts, entitySignature.ts
   score/       trending-score computation + calibration harness (Phase 4)
   link/        situation↔asset and situation↔outlook matching (Phase 10, 13)
   emit/        D1 writes + R2 snapshot generation (Phase 5) — this is where the
@@ -66,6 +69,28 @@ nothing to verify against. `event_articles` linking (event <-> article associati
 Phase 3's job, not Phase 2's — it's the same entity/time-window matching machinery
 situation clustering needs anyway, so building it here would mean building Phase 3 to
 finish Phase 2.
+
+## Phase 3 scope note
+
+The plan's original framing was "build the entities gazetteer for real" — what actually
+got built is narrower and, I think, better: GDELT already provides STRUCTURED actor and
+country codes on every event (Actor1/Actor2 country codes, the event-location country),
+which are a real, reliable, deterministic entity signature with no gazetteer-building
+required for the clustering similarity function specifically. `entitySignature.ts` uses
+these directly. A genuine gazetteer (resolving free-text names like "the Pentagon" or
+"President X" to canonical entities, populating the `entities`/`situation_entities`
+tables for display and cross-referencing to assets in Phase 10) is still real future
+work, just not a blocker for clustering to function correctly — noted honestly rather
+than silently narrowed.
+
+Also deferred: SPLIT handling (a situation that incorrectly absorbed two distinct
+stories needing to separate again) — implemented is MERGE (two situations found to be
+the same story), which is the common case; split requires re-evaluating every member
+event against two new candidate centroids and is a rare, harder operation not needed
+for MVP-level correctness. The stable-ID redirect a merge implies (so a deep link or
+alert on the absorbed situation keeps resolving) is a Phase 5 emit-layer concern —
+`mergeSituations` returns which id survives; the actual redirect table is IO, deferred
+with everything else in this phase.
 
 ## Known and accepted: dev-dependency vulnerabilities
 

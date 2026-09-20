@@ -7,6 +7,7 @@
  */
 import type { EventRow } from "../shared/types.js";
 import { lookupCameoRoot } from "./cameoCategoryMap.js";
+import { fipsToIsoAlpha2 } from "./countryCodes.js";
 import type { RawGdeltEventRow } from "./gdeltEventParser.js";
 
 /** GDELT's SQLDATE (YYYYMMDD) -> an ISO8601 UTC midnight timestamp. */
@@ -66,7 +67,10 @@ export function mapGdeltEventToEventRow(raw: RawGdeltEventRow): EventRow | null 
     lat: parseNullableNumber(raw.actionGeoLat),
     lon: parseNullableNumber(raw.actionGeoLong),
     geo_name: raw.actionGeoFullName || null,
-    country_iso: raw.actionGeoCountryCode || null,
+    // ActionGeo_CountryCode is FIPS 10-4, not ISO — converted here, not stored raw.
+    // See countryCodes.ts's doc comment for why this matters (Austria/Turkey/China all
+    // diverge, and Austria's FIPS code collides with Australia's ISO code).
+    country_iso: fipsToIsoAlpha2(raw.actionGeoCountryCode),
     geo_precision: parseNullableNumber(raw.actionGeoType),
     occurred_at: occurredAt,
     first_seen_at: firstSeenAt,

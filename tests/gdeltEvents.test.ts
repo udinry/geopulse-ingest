@@ -99,4 +99,15 @@ describe("mapGdeltEventToEventRow against the same real sample", () => {
     expect(mapped.lat).toBeNull();
     expect(mapped.lon).toBeNull();
   });
+
+  it("converts ActionGeo_CountryCode (FIPS) to ISO 3166-1 alpha-2, not the raw FIPS code — regression test for a real bug found while building Phase 3's gazetteer", () => {
+    // Real row 18 in the fixture (globalEventId 1323952165) has ActionGeo_CountryCode
+    // = "CH" (FIPS for China). Storing that raw into country_iso would make a Chinese
+    // event look Swiss (ISO "CH" = Switzerland) to anything consuming the field.
+    const chinaRow = rows.find((r) => r.globalEventId === "1323952165");
+    expect(chinaRow).toBeDefined();
+    expect(chinaRow!.actionGeoCountryCode).toBe("CH");
+    const mapped = mapGdeltEventToEventRow(chinaRow!)!;
+    expect(mapped.country_iso).toBe("CN");
+  });
 });
