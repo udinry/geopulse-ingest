@@ -15,7 +15,7 @@ export class BinanceMarketSource implements MarketSource {
   readonly id = "binance";
   private readonly endpoint: URL;
 
-  constructor(endpoint = "https://api.binance.com/api/v3/ticker/24hr") {
+  constructor(endpoint = "https://data-api.binance.vision/api/v3/ticker/24hr") {
     this.endpoint = new URL(endpoint);
   }
 
