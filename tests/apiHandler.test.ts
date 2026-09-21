@@ -66,7 +66,7 @@ describe("read API handler", () => {
   it("keeps search empty until a meaningful query is supplied", async () => {
     const db = new FakeDB();
     const response = await handleRequest(request("/v1/search?q=x"), { db });
-    expect(await response.json()).toEqual({ query: "x", sections: { situations: [], assets: [] } });
+    expect(await response.json()).toEqual({ query: "x", sections: { situations: [], assets: [], companies: [] } });
     expect(db.queries).toHaveLength(0);
   });
 
@@ -100,6 +100,7 @@ describe("read API handler", () => {
       sections: {
         situations: [{ id: "s1", title: "Situation", category: "militaryMovement", trendingScore: 1 }],
         assets: [{ id: "btc", symbol: "BTC", name: "Bitcoin", assetClass: "crypto", score: 1 }],
+        companies: [],
       },
     });
   });
@@ -158,5 +159,23 @@ describe("read API handler", () => {
     const response = await handleRequest(request("/v1/situation/s1", { "x-region-iso": "IN" }), { db });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(expect.objectContaining({ outlook: [] }));
+  });
+
+  it("searches the company registry by ticker or name, with an outbound quote link and no price", async () => {
+    const response = await handleRequest(request("/v1/search?q=reliance"), { db: new FakeDB() });
+    const json = await response.json() as { sections: { companies: Array<Record<string, unknown>> } };
+    expect(json.sections.companies).toEqual([{ symbol: "RELIANCE", name: "Reliance Industries", exchange: "NSE", country: "IN", quoteURL: "https://www.google.com/finance/quote/RELIANCE:NSE" }]);
+  });
+
+  it("replaces a device's watches, rejects unknown targets, and keeps original watch times", async () => {
+    const db = new FakeDB();
+    db.devices.add("device-1");
+    const put = (watches: unknown) => handleRequest(new Request("https://api.example/v1/watches", { method: "PUT", headers: { "x-device-id": "device-1" }, body: JSON.stringify({ watches }) }), { db });
+    expect((await put([{ kind: "company", symbol: "XOM", exchange: "NYSE" }, { kind: "asset", symbol: "BRENT" }])).status).toBe(200);
+    expect((await put([{ kind: "company", symbol: "NOPE", exchange: "NYSE" }])).status).toBe(400);
+    expect((await put([{ kind: "company", symbol: "XOM", exchange: "NASDAQ" }])).status).toBe(400);
+    expect(db.writes.filter((w) => w.startsWith("INSERT OR IGNORE INTO device_watches"))).toHaveLength(2);
+    const ghost = await handleRequest(new Request("https://api.example/v1/watches", { method: "PUT", headers: { "x-device-id": "ghost" }, body: JSON.stringify({ watches: [] }) }), { db });
+    expect(ghost.status).toBe(404);
   });
 });

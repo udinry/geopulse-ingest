@@ -1,5 +1,6 @@
 import { handleRequest, type APIEnvironment, type Queryable } from "./handler.js";
 import { dispatchAlerts, type APNsSender } from "../alerts/dispatch.js";
+import { dispatchWatchImpacts } from "../alerts/watchImpact.js";
 import { APNsHTTPClient } from "../alerts/apns.js";
 
 interface D1StatementLike {
@@ -52,6 +53,10 @@ export default {
     const sender = env.APNsSender ?? (env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_PRIVATE_KEY && env.APNS_TOPIC
       ? new APNsHTTPClient({ keyID: env.APNS_KEY_ID, teamID: env.APNS_TEAM_ID, privateKeyPEM: env.APNS_PRIVATE_KEY, topic: env.APNS_TOPIC, sandbox: env.APNS_SANDBOX === "true" })
       : undefined);
-    if (sender !== undefined) await dispatchAlerts(queryAdapter(env.DB), sender, new Date().toISOString());
+    if (sender === undefined) return;
+    const db = queryAdapter(env.DB);
+    const now = new Date().toISOString();
+    await dispatchAlerts(db, sender, now);
+    await dispatchWatchImpacts(db, sender, now);
   },
 };

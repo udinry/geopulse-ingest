@@ -1,4 +1,4 @@
-import type { EventCategory } from "../shared/types.js";
+import { CONFLICT, ruleMatches, type LinkInput, type RuleBase } from "./ruleMatch.js";
 
 /**
  * Situation -> company links. Reference data only: this module never carries or
@@ -52,19 +52,10 @@ export const COMPANIES: Readonly<Record<string, Company>> = {
   INTC: { symbol: "INTC", name: "Intel", exchange: "NASDAQ", country: "US" },
 };
 
-interface Rule {
-  id: string;
-  /** Matches when the situation's category is in this list... */
-  categories?: readonly EventCategory[];
-  /** ...and/or its title/place contains any of these (lowercase) substrings. */
-  keywords?: readonly string[];
-  /** When both are set, BOTH must match (a keyword alone in an unrelated category doesn't link). */
-  requireBoth?: boolean;
+interface Rule extends RuleBase {
   companies: readonly string[];
   rationale: string;
 }
-
-const CONFLICT: readonly EventCategory[] = ["warArmedConflict", "militaryMovement", "internationalDispute", "sanctionsTradeRestriction"];
 
 export const RULES: readonly Rule[] = [
   {
@@ -123,11 +114,7 @@ export const RULES: readonly Rule[] = [
   },
 ];
 
-export interface CompanyLinkInput {
-  category: EventCategory;
-  title: string;
-  geo_name: string | null;
-}
+export type CompanyLinkInput = LinkInput;
 
 export interface CompanyLink {
   symbol: string;
@@ -144,20 +131,12 @@ export function quoteURL(company: Company): string {
   return `https://www.google.com/finance/quote/${encodeURIComponent(company.symbol)}:${company.exchange}`;
 }
 
-function ruleMatches(rule: Rule, input: CompanyLinkInput, haystack: string): boolean {
-  const categoryHit = rule.categories?.includes(input.category) ?? false;
-  const keywordHit = rule.keywords?.some((keyword) => haystack.includes(keyword)) ?? false;
-  if (rule.requireBoth === true) return categoryHit && keywordHit;
-  return categoryHit || keywordHit;
-}
-
 /** Deterministic: same input, same output. First matching rule wins per company. Max 12. */
 export function linkCompanies(input: CompanyLinkInput, limit = 12): CompanyLink[] {
-  const haystack = `${input.title} ${input.geo_name ?? ""}`.toLowerCase();
   const seen = new Set<string>();
   const links: CompanyLink[] = [];
   for (const rule of RULES) {
-    if (!ruleMatches(rule, input, haystack)) continue;
+    if (!ruleMatches(rule, input)) continue;
     for (const symbol of rule.companies) {
       const company = COMPANIES[symbol];
       if (company === undefined || seen.has(symbol)) continue;

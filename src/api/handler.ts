@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { buildNowSnapshot, encodeSnapshot, type NowSnapshot } from "../emit/snapshot.js";
 import { serializeAsset, serializeAssetSearchResult, serializeOutlook, serializeSearchResult } from "../emit/publicSerializer.js";
 import { isOutlookEnabled } from "../outlook/controls.js";
-import { linkCompanies } from "../link/companyLinks.js";
+import { COMPANIES, linkCompanies, quoteURL } from "../link/companyLinks.js";
+import { WATCHABLE_ASSETS } from "../link/assetLinks.js";
 import { setManualOutlookLink, setOutlookKillSwitch } from "../outlook/controls.js";
 
 export interface Queryable {
@@ -81,6 +82,41 @@ async function loadSituation(env: APIEnvironment, id: string, regionISO: string 
   };
 }
 
+function searchCompanies(query: string) {
+  const needle = query.toLowerCase();
+  return Object.values(COMPANIES)
+    .filter((company) => company.symbol.toLowerCase().includes(needle) || company.name.toLowerCase().includes(needle))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol))
+    .slice(0, 20)
+    .map((company) => ({ symbol: company.symbol, name: company.name, exchange: company.exchange, country: company.country, quoteURL: quoteURL(company) }));
+}
+
+const MAX_WATCHES = 50;
+
+async function replaceWatches(env: APIEnvironment, device: string, request: Request): Promise<Response> {
+  const input = await body<{ watches?: Array<{ kind?: string; symbol?: string; exchange?: string }> }>(request);
+  if (!Array.isArray(input.watches) || input.watches.length > MAX_WATCHES) return errorResponse(`watches must be an array of at most ${MAX_WATCHES}`, 400, request);
+  const clean: Array<{ kind: "company" | "asset"; symbol: string; exchange: string }> = [];
+  for (const watch of input.watches) {
+    const exchange = watch.exchange ?? "";
+    const valid = watch.kind === "company"
+      ? watch.symbol !== undefined && COMPANIES[watch.symbol]?.exchange === exchange
+      : watch.kind === "asset" && watch.symbol !== undefined && watch.symbol in WATCHABLE_ASSETS && exchange === "";
+    if (!valid) return errorResponse("unknown watch target", 400, request);
+    clean.push({ kind: watch.kind as "company" | "asset", symbol: watch.symbol as string, exchange });
+  }
+  const owner = await env.db.first<{ id: string }>("SELECT id FROM devices WHERE id = ?", device);
+  if (owner === null) return errorResponse("device not found", 404, request);
+  const now = env.now?.() ?? new Date().toISOString();
+  const existing = await env.db.all<{ kind: string; symbol: string; exchange: string; created_at: string }>("SELECT kind, symbol, exchange, created_at FROM device_watches WHERE device_id = ?", device);
+  const createdAt = new Map(existing.map((row) => [`${row.kind}|${row.symbol}|${row.exchange}`, row.created_at]));
+  await env.db.run("DELETE FROM device_watches WHERE device_id = ?", device);
+  for (const watch of clean) {
+    await env.db.run("INSERT OR IGNORE INTO device_watches (device_id, kind, symbol, exchange, created_at) VALUES (?, ?, ?, ?, ?)", device, watch.kind, watch.symbol, watch.exchange, createdAt.get(`${watch.kind}|${watch.symbol}|${watch.exchange}`) ?? now);
+  }
+  return jsonResponse({ count: clean.length }, request);
+}
+
 async function body<T>(request: Request): Promise<T> {
   return await request.json() as T;
 }
@@ -131,6 +167,11 @@ export async function handleRequest(request: Request, env: APIEnvironment): Prom
       await env.db.run("INSERT INTO alerts (id, device_id, kind, subject_type, subject_id, operator, threshold, window_minutes, live_activity, cooldown_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, device, input.kind, input.subjectType, input.subjectID, input.operator, input.threshold, input.windowMinutes ?? null, input.liveActivity === true ? 1 : 0, input.cooldownMinutes ?? 15);
       return jsonResponse({ id }, request, 201);
     }
+    if (request.method === "PUT" && url.pathname === "/v1/watches") {
+      const device = deviceID(request);
+      if (device === null) return errorResponse("x-device-id is required", 401, request);
+      return await replaceWatches(env, device, request);
+    }
     if (request.method === "GET" && url.pathname === "/v1/alerts") {
       const device = deviceID(request);
       if (device === null) return errorResponse("x-device-id is required", 401, request);
@@ -157,12 +198,12 @@ export async function handleRequest(request: Request, env: APIEnvironment): Prom
     }
     if (url.pathname === "/v1/search") {
       const query = url.searchParams.get("q")?.trim() ?? "";
-      if (query.length < 2) return jsonResponse({ query, sections: { situations: [], assets: [] } }, request);
+      if (query.length < 2) return jsonResponse({ query, sections: { situations: [], assets: [], companies: [] } }, request);
       const [results, assets] = await Promise.all([
         env.db.all<SituationRow>("SELECT id, title, category, trending_score FROM situations WHERE title LIKE ? ORDER BY trending_score DESC LIMIT 20", `%${query}%`),
         env.db.all<AssetRow>("SELECT id, symbol, name, class FROM assets WHERE license_class = 'green' AND (symbol LIKE ? OR name LIKE ?) ORDER BY symbol ASC LIMIT 20", `%${query}%`, `%${query}%`),
       ]);
-      return jsonResponse({ query, sections: { situations: results.map(serializeSearchResult), assets: assets.map((asset) => serializeAssetSearchResult(asset, 1)) } }, request);
+      return jsonResponse({ query, sections: { situations: results.map(serializeSearchResult), assets: assets.map((asset) => serializeAssetSearchResult(asset, 1)), companies: searchCompanies(query) } }, request);
     }
     if (url.pathname === "/v1/markets") {
       const assets = await env.db.all<AssetRow>("SELECT id, symbol, name, class, currency, license_class, is_delayed, delay_minutes FROM assets WHERE license_class = 'green' ORDER BY symbol ASC");
