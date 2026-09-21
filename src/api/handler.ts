@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { buildNowSnapshot, encodeSnapshot, type NowSnapshot } from "../emit/snapshot.js";
 import { serializeAsset, serializeAssetSearchResult, serializeOutlook, serializeSearchResult } from "../emit/publicSerializer.js";
 import { isOutlookEnabled } from "../outlook/controls.js";
+import { linkCompanies } from "../link/companyLinks.js";
 import { setManualOutlookLink, setOutlookKillSwitch } from "../outlook/controls.js";
 
 export interface Queryable {
@@ -58,7 +59,7 @@ async function loadNow(env: APIEnvironment, generatedAt: string): Promise<NowSna
 
 async function loadSituation(env: APIEnvironment, id: string, regionISO: string | null): Promise<Record<string, unknown> | null> {
   const situation = await env.db.first<SituationRow>(
-    "SELECT id, title, category, lat, lon, country_iso, status, first_seen_at, last_event_at, trending_score, event_count, source_count, map_rank FROM situations WHERE id = ?",
+    "SELECT id, title, category, lat, lon, geo_name, country_iso, status, first_seen_at, last_event_at, trending_score, event_count, source_count, map_rank FROM situations WHERE id = ?",
     id,
   );
   if (situation === null) return null;
@@ -76,6 +77,7 @@ async function loadSituation(env: APIEnvironment, id: string, regionISO: string 
     news: news.filter((article) => article.published_at !== null).map((article) => ({ id: article.id, sourceName: article.source_name, headline: article.title, excerpt: article.excerpt, publishedAt: article.published_at, url: article.url_canonical })),
     outlook: outlookRows.map((market) => { const link = linksByMarket.get(market.id); return link === undefined ? null : serializeOutlook(market, link); }).filter((outlook) => outlook !== null),
     assets: [],
+    companies: linkCompanies(situation),
   };
 }
 
