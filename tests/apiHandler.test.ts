@@ -29,6 +29,7 @@ class FakeDB implements Queryable {
       return this.devices.has(id) ? ({ id } as T) : null;
     }
     if (sql.includes("FROM outlook_controls")) return null;
+    if (sql.includes("FROM assets")) return ({ id: "btc" } as T);
     return sql.includes("FROM situations") ? row as T : null;
   }
   async run(sql: string, ...bindings: unknown[]): Promise<void> {

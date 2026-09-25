@@ -92,6 +92,9 @@ function searchCompanies(query: string) {
 }
 
 const MAX_WATCHES = 50;
+const ALERT_KINDS = new Set(["price", "percent", "velocity", "situation", "outlook"]);
+const ALERT_SUBJECTS = new Set(["asset", "situation", "market"]);
+const ALERT_OPERATORS = new Set(["gt", "gte", "lt", "lte", "crosses"]);
 
 async function replaceWatches(env: APIEnvironment, device: string, request: Request): Promise<Response> {
   const input = await body<{ watches?: Array<{ kind?: string; symbol?: string; exchange?: string }> }>(request);
@@ -156,11 +159,24 @@ export async function handleRequest(request: Request, env: APIEnvironment): Prom
       await env.db.run("INSERT INTO devices (id, apns_token, region_iso, is_pro, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET apns_token = excluded.apns_token, region_iso = excluded.region_iso, is_pro = excluded.is_pro, last_seen_at = excluded.last_seen_at", input.id, input.apnsToken, input.regionISO ?? null, input.isPro === true ? 1 : 0, now, now);
       return jsonResponse({ id: input.id }, request, 201);
     }
+    if (request.method === "DELETE" && url.pathname.startsWith("/v1/devices/")) {
+      const target = decodeURIComponent(url.pathname.slice("/v1/devices/".length));
+      // Device-scoped identity: a device may delete only itself. This is the data-deletion control.
+      if (deviceID(request) !== target) return errorResponse("x-device-id must match the device being deleted", 403, request);
+      await env.db.run("DELETE FROM alert_deliveries WHERE alert_id IN (SELECT id FROM alerts WHERE device_id = ?)", target);
+      await env.db.run("DELETE FROM alerts WHERE device_id = ?", target);
+      await env.db.run("DELETE FROM watch_deliveries WHERE device_id = ?", target);
+      await env.db.run("DELETE FROM device_watches WHERE device_id = ?", target);
+      await env.db.run("DELETE FROM devices WHERE id = ?", target);
+      return new Response(null, { status: 204 });
+    }
     if (request.method === "POST" && url.pathname === "/v1/alerts") {
       const device = deviceID(request);
       if (device === null) return errorResponse("x-device-id is required", 401, request);
       const input = await body<{ kind: string; subjectType: string; subjectID: string; operator: string; threshold: number; windowMinutes?: number | null; liveActivity?: boolean; cooldownMinutes?: number }>(request);
       if (!input.kind || !input.subjectType || !input.subjectID || !input.operator || !Number.isFinite(input.threshold)) return errorResponse("invalid alert rule", 400, request);
+      if (!ALERT_KINDS.has(input.kind) || !ALERT_SUBJECTS.has(input.subjectType) || !ALERT_OPERATORS.has(input.operator)) return errorResponse("unsupported alert kind, subject, or operator", 400, request);
+      if (input.subjectType === "asset" && await env.db.first("SELECT id FROM assets WHERE id = ? AND license_class = 'green'", input.subjectID) === null) return errorResponse("unknown or unlicensed asset", 400, request);
       const owner = await env.db.first<{ id: string }>("SELECT id FROM devices WHERE id = ?", device);
       if (owner === null) return errorResponse("device not found", 404, request);
       const id = randomUUID();

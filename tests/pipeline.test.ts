@@ -1,27 +1,10 @@
-import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { handleRequest, type Queryable } from "../src/api/handler.js";
+import { handleRequest } from "../src/api/handler.js";
 import { eventImpulse, eventSeverity, ingestBatch, refreshRanking, SEVERITY_FLOOR } from "../src/run/pipeline.js";
-import { inlineParams, type BatchWriter, type Statement } from "../src/run/sql.js";
 import { parseGkgTitles } from "../src/normalize/gkgParser.js";
 import type { EventRow } from "../src/shared/types.js";
 import { TestDb } from "./dbTestHelper.js";
-
-/** A real SQLite database (same dialect as D1) behind the Queryable the pipeline and API use. */
-class SqliteDb implements Queryable, BatchWriter {
-  constructor(private readonly db: TestDb) {}
-  async all<T>(sql: string, ...b: unknown[]): Promise<T[]> {
-    return this.db.query<T>(`PRAGMA foreign_keys=ON; ${inlineParams(sql, b)}`.replace(/^PRAGMA foreign_keys=ON; /, ""));
-  }
-  async first<T>(sql: string, ...b: unknown[]): Promise<T | null> { return (await this.all<T>(sql, ...b))[0] ?? null; }
-  async run(sql: string, ...b: unknown[]): Promise<void> { this.exec([{ sql, params: b }]); }
-  async batch(statements: readonly Statement[]): Promise<void> { this.exec(statements); }
-  private exec(statements: readonly Statement[]): void {
-    const script = ["PRAGMA foreign_keys=ON;", "BEGIN;", ...statements.map((s) => `${inlineParams(s.sql, s.params)};`), "COMMIT;"].join("\n");
-    const r = spawnSync("sqlite3", [this.db.path], { input: script, encoding: "utf8" });
-    if (r.status !== 0) throw new Error(`sqlite failed: ${r.stderr}\n${script.slice(0, 400)}`);
-  }
-}
+import { SqliteDb } from "./sqliteDb.js";
 
 const NOW = "2026-09-25T12:00:00Z";
 function ev(id: string, over: Partial<EventRow> = {}): EventRow {
