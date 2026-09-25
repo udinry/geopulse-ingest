@@ -1,0 +1,16 @@
+name = "geopulse-api"
+main = "src/api/worker.ts"
+compatibility_date = "2026-09-01"
+# handler.ts / alerts use node:crypto (randomUUID, createHash).
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "geopulse"
+database_id = "4effe5d5-475f-433d-b204-e1e2e08b716c"
+migrations_dir = "migrations"
+
+# Alert + watch-impact dispatch. Ingestion itself runs on GitHub Actions (public repo,
+# unlimited minutes) — a Worker's 10ms free-tier CPU can't run the pipeline.
+[triggers]
+crons = ["*/5 * * * *"]
