@@ -1,0 +1,32 @@
+name: Ingest
+
+# Ingestion runs here, not on a Worker: a free Worker's 10ms CPU can't parse, cluster
+# and score a GDELT batch, and public-repo Actions minutes are unlimited.
+# GitHub may delay or skip scheduled runs; each run resumes from the watermark stored in
+# D1 (ingest_runs), so a skipped tick self-heals on the next one.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run ingest
+        env:
+          CF_ACCOUNT_ID: 364c46706de83ee91cb25f9e2893968c
+          D1_DATABASE_ID: 4effe5d5-475f-433d-b204-e1e2e08b716c
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}

@@ -16,7 +16,14 @@ export async function ingestLicensedQuotes(db: Queryable, options: MarketIngestO
   for (const asset of assets) {
     const source = sources.get(asset.data_source) ?? marketSourceFor(asset.data_source, options.eiaAPIKey);
     if (source === null) continue;
-    const quote = await source.quote(asset.symbol);
+    let quote;
+    try {
+      quote = await source.quote(asset.symbol);
+    } catch (error) {
+      // One source or symbol failing must not stop quotes for every other asset.
+      console.error(`quote for ${asset.symbol} failed`, error);
+      continue;
+    }
     if (quote === null) continue;
     await db.run("INSERT INTO asset_prices (asset_id, ts, price, change_pct, as_of, session_state) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(asset_id, ts) DO UPDATE SET price = excluded.price, change_pct = excluded.change_pct, as_of = excluded.as_of, session_state = excluded.session_state", asset.id, quote.asOf, quote.price, quote.changePercent, quote.asOf, quote.sessionState);
     inserted += 1;

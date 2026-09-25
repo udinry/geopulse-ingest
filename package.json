@@ -11,10 +11,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "echo 'lint: not yet configured (Phase 2)' && exit 0"
+    "lint": "echo 'lint: not yet configured (Phase 2)' && exit 0",
+    "ingest": "tsx src/run/main.ts"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.2",
     "vitest": "^2.1.9",
     "wrangler": "^4.140.0"
