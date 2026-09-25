@@ -15,9 +15,16 @@ export class WranglerD1 implements Queryable, BatchWriter {
   constructor(private readonly database = "geopulse", private readonly cwd = process.cwd()) {}
 
   private wrangler(args: string[]): string {
-    const r = spawnSync("npx", ["wrangler", "d1", "execute", this.database, "--remote", ...args], { cwd: this.cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    if (r.status !== 0) throw new Error(`wrangler failed: ${r.stderr || r.stdout}`);
-    return r.stdout;
+    // wrangler's own network calls fail transiently; a manual run should ride through that.
+    let last = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const r = spawnSync("npx", ["wrangler", "d1", "execute", this.database, "--remote", ...args], { cwd: this.cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      if (r.status === 0) return r.stdout;
+      last = r.stderr || r.stdout;
+      if (!/fetch failed|connectivity|ECONN|ETIMEDOUT|ENOTFOUND|5\d\d/.test(last)) break;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000 * (attempt + 1));
+    }
+    throw new Error(`wrangler failed: ${last}`);
   }
 
   async all<T>(sql: string, ...bindings: unknown[]): Promise<T[]> {

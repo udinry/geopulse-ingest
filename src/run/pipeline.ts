@@ -169,11 +169,20 @@ function sharedTokens(a: readonly string[], b: ReadonlySet<string> | undefined):
   return n;
 }
 
+/**
+ * An event is "already processed" only if its situation was actually aggregated
+ * (event_count > 0). A run interrupted between storing events and aggregating leaves events
+ * behind with an un-aggregated situation; treating those as done would orphan them forever,
+ * so they are reprocessed (every insert is idempotent) and the aggregates repaired.
+ */
 async function existingEventIds(db: Db, ids: readonly string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
-    const rows = await db.all<{ id: string }>(`SELECT id FROM events WHERE id IN (${chunk.map(() => "?").join(",")})`, ...chunk);
+    const rows = await db.all<{ id: string }>(
+      `SELECT DISTINCT e.id FROM events e JOIN situation_events se ON se.event_id = e.id JOIN situations s ON s.id = se.situation_id WHERE s.event_count > 0 AND e.id IN (${chunk.map(() => "?").join(",")})`,
+      ...chunk,
+    );
     for (const r of rows) found.add(r.id);
   }
   return found;

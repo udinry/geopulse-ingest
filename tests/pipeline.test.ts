@@ -105,6 +105,19 @@ describe("ingestBatch against a real SQLite database", () => {
     expect(db.query(q)).toEqual(before);
   });
 
+  it("repairs a run that was interrupted after storing events but before aggregating their situation", async () => {
+    await ingestBatch(sqlite, { events, sourceUrls: urls, titles, now: NOW });
+    // Simulate the crash: events and links are stored, the situation was never aggregated.
+    db.exec("UPDATE situations SET event_count = 0, source_count = 0, trending_score = 0, score_updated_at = NULL;");
+    const again = await ingestBatch(sqlite, { events, sourceUrls: urls, titles, now: "2026-09-25T12:30:00Z" });
+    expect(again.eventsKept).toBe(4);
+    expect(again.eventsAlreadyStored).toBe(0);
+    const sits = db.query<{ event_count: number; source_count: number; trending_score: number }>("SELECT event_count, source_count, trending_score FROM situations ORDER BY event_count DESC");
+    expect(sits[0]).toMatchObject({ event_count: 3, source_count: 3 });
+    expect(sits[0]!.trending_score).toBeGreaterThan(0);
+    expect(db.query("SELECT * FROM events")).toHaveLength(4);
+  });
+
   it("a later related article joins the existing situation and raises its score", async () => {
     await ingestBatch(sqlite, { events: [events[0]!], sourceUrls: urls, titles, now: NOW });
     const first = db.query<{ id: string; trending_score: number }>("SELECT id, trending_score FROM situations")[0]!;
