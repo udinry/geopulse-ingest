@@ -78,8 +78,8 @@ describe("ingestBatch against a real SQLite database", () => {
   const urls = new Map(events.map((e) => [e.id, `https://${e.gdelt_event_id === "5" ? "sydney" : `pub${e.gdelt_event_id}`}.example/${e.gdelt_event_id}`]));
   const titles = gkg([
     ["https://pub1.example/1", "Naval buildup near the Strait of Hormuz"],
-    ["https://pub2.example/2", "Tehran warns of response in the Gulf"],
-    ["https://pub6.example/6", "Gulf shipping insurers raise war-risk rates"],
+    ["https://pub2.example/2", "Iran warns of naval buildup near Hormuz strait"],
+    ["https://pub6.example/6", "Insurers raise war-risk rates near Hormuz strait"],
     ["https://sydney.example/5", "Sydney rally draws thousands"],
   ]);
 
@@ -125,12 +125,35 @@ describe("ingestBatch against a real SQLite database", () => {
     expect(now.situations.map((x) => x.mapRank)).toEqual([1]);
     const detail = await (await handleRequest(new Request(`https://api.test/v1/situation/${now.situations[0]!.id}`), { db: sqlite })).json() as { news: Array<{ headline: string }>; events: unknown[]; companies: Array<{ symbol: string }> };
     expect(detail.events).toHaveLength(3);
-    expect(detail.news.map((n) => n.headline).sort()).toEqual(["Gulf shipping insurers raise war-risk rates", "Naval buildup near the Strait of Hormuz", "Tehran warns of response in the Gulf"]);
+    expect(detail.news.map((n) => n.headline).sort()).toEqual(["Insurers raise war-risk rates near Hormuz strait", "Iran warns of naval buildup near Hormuz strait", "Naval buildup near the Strait of Hormuz"]);
     expect(detail.companies.map((c) => c.symbol)).toEqual(expect.arrayContaining(["XOM", "RELIANCE", "ZIM"]));
 
     await refreshRanking(sqlite, "2026-09-28T12:00:00Z"); // 3 days later, nothing new
     expect(db.query<{ status: string }>("SELECT DISTINCT status FROM situations")).toEqual([{ status: "recent" }]);
     expect(db.query("SELECT * FROM situations WHERE map_rank IS NOT NULL")).toHaveLength(0);
+  });
+
+  it("does not merge an unrelated story just because GDELT put it nearby with similar actors", async () => {
+    const fire = ev("60", { lat: 26.5, lon: 56.3, num_mentions: 50 });
+    const other = ev("61", { lat: 26.6, lon: 56.4, first_seen_at: "2026-09-25T11:40:00Z" }); // same place, actors, category
+    const u = new Map([[fire.id, "https://a.example/fire"], [other.id, "https://b.example/diplomat"]]);
+    const t = gkg([["https://a.example/fire", "Garrison fire sends one person to hospital"], ["https://b.example/diplomat", "Israeli diplomat's son hurt in attack"]]);
+    const r = await ingestBatch(sqlite, { events: [fire, other], sourceUrls: u, titles: t, now: NOW });
+    expect(r.situationsCreated).toBe(2);
+  });
+
+  it("still merges a related story that shares headline vocabulary", async () => {
+    const a = ev("62");
+    const b = ev("63", { first_seen_at: "2026-09-25T11:40:00Z" });
+    const u = new Map([[a.id, "https://a.example/1"], [b.id, "https://b.example/2"]]);
+    const t = gkg([["https://a.example/1", "Tehran warns of response in the Gulf"], ["https://b.example/2", "Gulf states brace for Tehran response"]]);
+    expect((await ingestBatch(sqlite, { events: [a, b], sourceUrls: u, titles: t, now: NOW })).situationsCreated).toBe(1);
+  });
+
+  it("stores the report time, not GDELT's day-precision date, as the event time", async () => {
+    const e = ev("64", { occurred_at: "2026-09-25T00:00:00Z", first_seen_at: "2026-09-25T11:37:00Z" });
+    await ingestBatch(sqlite, { events: [e], sourceUrls: new Map([[e.id, "https://a.example/x"]]), titles: gkg([["https://a.example/x", "Heavy fighting near the border"]]), now: NOW });
+    expect(db.query<{ occurred_at: string }>("SELECT occurred_at FROM events")[0]?.occurred_at).toBe("2026-09-25T11:37:00Z");
   });
 
   it("drops cooperative/diplomatic chatter that GDELT extracts from ordinary stories", async () => {

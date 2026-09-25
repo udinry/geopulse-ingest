@@ -15,7 +15,9 @@ const STOPWORDS = new Set([
   "is", "are", "was", "were", "be", "been", "as", "by", "from", "this", "that",
 ]);
 
-const PUBLISHER_SUFFIX = /\s*[|–—-]\s*[A-Za-z0-9 .]+$/; // strips " | Reuters", " - AP", " — BBC"
+// Whitespace is REQUIRED on both sides of the separator: with `\s*`, a hyphenated word
+// ("war-risk", "Iran-backed") matched as a "suffix" and silently truncated the headline.
+const PUBLISHER_SUFFIX = /\s+[|–—-]\s+[A-Za-z0-9 .]+$/; // strips " | Reuters", " - AP", " — BBC"
 
 /** Lowercases, strips a trailing " | Publisher" suffix, strips punctuation, drops stopwords. */
 export function normalizeTitle(title: string): string[] {

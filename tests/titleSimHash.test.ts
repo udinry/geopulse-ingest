@@ -44,4 +44,10 @@ describe("titleSimHash", () => {
   it("an empty title hashes to zero rather than throwing", () => {
     expect(titleSimHash("")).toBe(0n);
   });
+
+  it("keeps hyphenated words intact instead of treating them as a publisher suffix", () => {
+    expect(normalizeTitle("Insurers raise war-risk rates near Hormuz strait")).toEqual(["insurers", "raise", "war", "risk", "rates", "near", "hormuz", "strait"]);
+    expect(normalizeTitle("Iran-backed rebels attack port")).toEqual(["iran", "backed", "rebels", "attack", "port"]);
+    expect(normalizeTitle("Rebels attack port - Reuters")).toEqual(["rebels", "attack", "port"]);
+  });
 });

@@ -30,6 +30,8 @@ export const CONFIRMATION_REF_SOURCES = 50;
  * quiet world shows the market panel instead of inventing importance.
  */
 export const SEVERITY_FLOOR = 0.25;
+/** A geographic/actor-similarity join also needs this many shared headline words (stopwords removed). */
+export const MIN_SHARED_HEADLINE_TOKENS = 2;
 export const MAP_TOP_N = 10;
 export const MAX_PER_COUNTRY = 2;
 export const ACTIVE_HOURS = 48;
@@ -146,6 +148,27 @@ async function situationsByUrl(db: Db, urls: readonly string[]): Promise<Map<str
   return found;
 }
 
+/** Significant headline words per active situation, from every article already joined to it. */
+async function loadHeadlineTokens(db: Db): Promise<Map<string, Set<string>>> {
+  const rows = await db.all<{ situation_id: string; title: string }>(
+    "SELECT se.situation_id, a.title FROM situation_events se JOIN event_articles ea ON ea.event_id = se.event_id JOIN articles a ON a.id = ea.article_id JOIN situations s ON s.id = se.situation_id WHERE s.status = 'active'",
+  );
+  const tokens = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const set = tokens.get(r.situation_id) ?? new Set<string>();
+    for (const t of normalizeTitle(r.title)) set.add(t);
+    tokens.set(r.situation_id, set);
+  }
+  return tokens;
+}
+
+function sharedTokens(a: readonly string[], b: ReadonlySet<string> | undefined): number {
+  if (b === undefined) return 0;
+  let n = 0;
+  for (const t of new Set(a)) if (b.has(t)) n++;
+  return n;
+}
+
 async function existingEventIds(db: Db, ids: readonly string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (let i = 0; i < ids.length; i += 50) {
@@ -190,6 +213,7 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
   const byHeadline = new Map<string, string>();
   for (const row of await db.all<{ id: string; title: string }>("SELECT id, title FROM situations WHERE status = 'active'")) byHeadline.set(normalizeTitle(row.title).join(" "), row.id);
   const byUrl = await situationsByUrl(db, fresh.map((c) => c.url));
+  const headlineTokens = await loadHeadlineTokens(db);
   const newIds = new Set<string>();
   const touched = new Set<string>();
   // One article routinely yields many event rows; a story must not score once per row.
@@ -202,9 +226,13 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
     const clusterEvent: EventRow = { ...event, occurred_at: event.first_seen_at };
     const headlineKey = normalizeTitle(title.title).join(" ");
     const sameStory = byUrl.get(url) ?? byHeadline.get(headlineKey);
+    const myTokens = normalizeTitle(title.title);
+    // Geography and actors alone are too weak (GDELT mislocates events): a similarity join
+    // must also share headline vocabulary with the situation. "Missing" beats "wrong".
+    const related = [...active.values()].filter((sit) => sharedTokens(myTokens, headlineTokens.get(sit.id)) >= MIN_SHARED_HEADLINE_TOKENS);
     const decision = sameStory !== undefined && active.has(sameStory)
       ? { action: "join" as const, situationId: sameStory, score: 1 }
-      : decideForEvent(clusterEvent, [...active.values()]);
+      : decideForEvent(clusterEvent, related);
     let situationId: string;
     let similarityScore: number | null = null;
 
@@ -217,6 +245,9 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
       active.set(situationId, situationFromEvent(situationId, clusterEvent));
       newIds.add(situationId);
     }
+    const tokenSet = headlineTokens.get(situationId) ?? new Set<string>();
+    for (const t of myTokens) tokenSet.add(t);
+    headlineTokens.set(situationId, tokenSet);
     byUrl.set(url, situationId);
     byHeadline.set(headlineKey, situationId);
     touched.add(situationId);
@@ -227,7 +258,7 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
     const aId = articleId(url);
     statements.push({
       sql: "INSERT OR IGNORE INTO events (id, gdelt_event_id, cameo_code, cameo_root, quad_class, goldstein, actor1_code, actor1_name, actor2_code, actor2_name, lat, lon, geo_name, country_iso, geo_precision, occurred_at, first_seen_at, num_mentions, num_sources, num_articles, avg_tone, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      params: [event.id, event.gdelt_event_id, event.cameo_code, event.cameo_root, event.quad_class, event.goldstein, event.actor1_code, event.actor1_name, event.actor2_code, event.actor2_name, event.lat, event.lon, event.geo_name, event.country_iso, event.geo_precision, event.occurred_at, event.first_seen_at, event.num_mentions, event.num_sources, event.num_articles, event.avg_tone, event.category],
+      params: [event.id, event.gdelt_event_id, event.cameo_code, event.cameo_root, event.quad_class, event.goldstein, event.actor1_code, event.actor1_name, event.actor2_code, event.actor2_name, event.lat, event.lon, event.geo_name, event.country_iso, event.geo_precision, event.first_seen_at, event.first_seen_at, event.num_mentions, event.num_sources, event.num_articles, event.avg_tone, event.category],
     });
     statements.push({
       sql: "INSERT OR IGNORE INTO articles (id, source_id, url_canonical, url_hash, title, title_norm, title_simhash, published_at, fetched_at, publisher_domain, publisher_name) VALUES (?, 'gdelt', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
