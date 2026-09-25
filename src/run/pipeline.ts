@@ -12,17 +12,24 @@ import type { EventCategory, EventRow } from "../shared/types.js";
 import type { BatchWriter, Statement } from "./sql.js";
 
 /**
- * An event needs this many distinct sources to be kept at all. That is the same bar a
- * situation needs to appear on the map (MAP_VISIBILITY_MIN_SOURCES), and a situation's
- * source count is a running max over its events — so a 1- or 2-source event can never
- * lift a situation toward visibility. Dropping them costs nothing the map would have
- * shown, and keeps us inside D1's free 100k-writes/day (a raw feed is ~800 events per
- * 15 minutes).
+ * Events are NOT gated on GDELT's per-event NumSources: that counts sources reporting one
+ * article's extraction in its first 15 minutes and is ~1 for 99.7% of events, so it is a
+ * bad corroboration signal (measured: 27 of 10,374). Corroboration is instead a property
+ * of a SITUATION — the number of distinct publishers across its joined articles — which
+ * is also what the map-visibility bar (>=3) is defined on (planning doc §8).
  */
-export const MIN_EVENT_SOURCES = 3;
 /** Reference magnitudes for log normalisation. Uncalibrated, like the weights (see PLAN.md Phase 4). */
 export const VELOCITY_REF_MENTIONS = 300;
 export const CONFIRMATION_REF_SOURCES = 50;
+/**
+ * An event must be at least this severe (Goldstein x CAMEO consequence class x quad
+ * class, in [0,1]) to be kept. GDELT extracts CAMEO events from ANY article, so
+ * without a bar the map fills with cooperative/diplomatic chatter and human-interest
+ * stories (a summit photo-op scores ~0.03, a threat or armed clash 0.25-1.0). Uncalibrated
+ * like the weights; the effect is that the map is conflict/coercion-focused, and a
+ * quiet world shows the market panel instead of inventing importance.
+ */
+export const SEVERITY_FLOOR = 0.25;
 export const MAP_TOP_N = 10;
 export const MAX_PER_COUNTRY = 2;
 export const ACTIVE_HOURS = 48;
@@ -80,15 +87,21 @@ export function availableWeights(weights: TrendingScoreWeights = BOOTSTRAP_PRIOR
   };
 }
 
-export function eventImpulse(event: EventRow): { magnitude: number; components: ImpulseComponents } {
+/** `distinctSources` is the situation's distinct-publisher count, not GDELT's per-event NumSources. */
+export function eventImpulse(event: EventRow, distinctSources: number = event.num_sources): { magnitude: number; components: ImpulseComponents } {
   const components: ImpulseComponents = {
     newsVelocity: Math.min(1, Math.log1p(event.num_mentions) / Math.log1p(VELOCITY_REF_MENTIONS)),
-    sourceConfirmation: Math.min(1, Math.log1p(event.num_sources) / Math.log1p(CONFIRMATION_REF_SOURCES)),
+    sourceConfirmation: Math.min(1, Math.log1p(distinctSources) / Math.log1p(CONFIRMATION_REF_SOURCES)),
     severity: eventSeverity(event),
     marketMovement: 0,
     outlookMovement: 0,
   };
   return { magnitude: combineImpulse(availableWeights(), components), components };
+}
+
+function publisherOf(title: GkgTitle, url: string): string {
+  if (title.sourceName) return title.sourceName.toLowerCase();
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "unknown"; }
 }
 
 function articleId(canonicalUrl: string): string {
@@ -119,6 +132,20 @@ async function loadActiveSituations(db: Db): Promise<Map<string, SituationState>
   return states;
 }
 
+/** Situations that already hold each article, in one chunked query instead of one per event. */
+async function situationsByUrl(db: Db, urls: readonly string[]): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+  for (let i = 0; i < urls.length; i += 50) {
+    const chunk = urls.slice(i, i + 50);
+    const rows = await db.all<{ url: string; situation_id: string }>(
+      `SELECT a.url_canonical AS url, se.situation_id FROM articles a JOIN event_articles ea ON ea.article_id = a.id JOIN situation_events se ON se.event_id = ea.event_id WHERE a.url_canonical IN (${chunk.map(() => "?").join(",")})`,
+      ...chunk,
+    );
+    for (const r of rows) found.set(r.url, r.situation_id);
+  }
+  return found;
+}
+
 async function existingEventIds(db: Db, ids: readonly string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (let i = 0; i < ids.length; i += 50) {
@@ -132,17 +159,24 @@ async function existingEventIds(db: Db, ids: readonly string[]): Promise<Set<str
 /** Ingests one batch of already-parsed GDELT events. Deterministic given its inputs and the current DB state. */
 export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResult> {
   const { now } = input;
-  const candidates: Array<{ event: EventRow; url: string; title: GkgTitle }> = [];
+  const best = new Map<string, { event: EventRow; url: string; title: GkgTitle }>();
   for (const event of input.events) {
-    if (event.num_sources < MIN_EVENT_SOURCES || event.lat === null || event.lon === null) continue;
+    if (event.lat === null || event.lon === null) continue;
+    if (eventSeverity(event) < SEVERITY_FLOOR) continue;
     const raw = input.sourceUrls.get(event.id);
     if (raw === undefined) continue;
     let url: string;
     try { url = canonicalizeUrl(raw); } catch { continue; }
     const title = input.titles.get(url);
-    if (title === undefined) continue;
-    candidates.push({ event, url, title });
+    if (title === undefined || !title.crisis) continue;
+    // One article = one development: of the many events GDELT extracts from it, keep
+    // the most severe (ties: most mentioned).
+    const current = best.get(url);
+    if (current === undefined || eventSeverity(event) > eventSeverity(current.event) || (eventSeverity(event) === eventSeverity(current.event) && event.num_mentions > current.event.num_mentions)) {
+      best.set(url, { event, url, title });
+    }
   }
+  const candidates = [...best.values()];
   candidates.sort((a, b) => a.event.first_seen_at.localeCompare(b.event.first_seen_at));
 
   const already = await existingEventIds(db, candidates.map((c) => c.event.id));
@@ -155,10 +189,11 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
   // already tied to an active situation pulls its other events into that situation.
   const byHeadline = new Map<string, string>();
   for (const row of await db.all<{ id: string; title: string }>("SELECT id, title FROM situations WHERE status = 'active'")) byHeadline.set(normalizeTitle(row.title).join(" "), row.id);
-  const byUrl = new Map<string, string>();
+  const byUrl = await situationsByUrl(db, fresh.map((c) => c.url));
   const newIds = new Set<string>();
   const touched = new Set<string>();
-  const impulses = new Map<string, number>();
+  // One article routinely yields many event rows; a story must not score once per row.
+  const arrivals = new Map<string, Map<string, EventRow>>();
   const statements: Statement[] = [];
   const membership: Statement[] = [];
 
@@ -166,14 +201,10 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
     // Cluster on report time (DATEADDED), not GDELT's date-only SQLDATE midnight.
     const clusterEvent: EventRow = { ...event, occurred_at: event.first_seen_at };
     const headlineKey = normalizeTitle(title.title).join(" ");
-    let sameStory = byUrl.get(url) ?? byHeadline.get(headlineKey);
-    if (sameStory === undefined) {
-      sameStory = (await db.first<{ situation_id: string }>("SELECT se.situation_id FROM articles a JOIN event_articles ea ON ea.article_id = a.id JOIN situation_events se ON se.event_id = ea.event_id WHERE a.url_canonical = ? LIMIT 1", url))?.situation_id;
-    }
+    const sameStory = byUrl.get(url) ?? byHeadline.get(headlineKey);
     const decision = sameStory !== undefined && active.has(sameStory)
       ? { action: "join" as const, situationId: sameStory, score: 1 }
       : decideForEvent(clusterEvent, [...active.values()]);
-    const impulse = eventImpulse(event);
     let situationId: string;
     let similarityScore: number | null = null;
 
@@ -189,7 +220,9 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
     byUrl.set(url, situationId);
     byHeadline.set(headlineKey, situationId);
     touched.add(situationId);
-    impulses.set(situationId, (impulses.get(situationId) ?? 0) + impulse.magnitude);
+    const perArticle = arrivals.get(situationId) ?? new Map<string, EventRow>();
+    perArticle.set(url, event);
+    arrivals.set(situationId, perArticle);
 
     const aId = articleId(url);
     statements.push({
@@ -198,7 +231,7 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
     });
     statements.push({
       sql: "INSERT OR IGNORE INTO articles (id, source_id, url_canonical, url_hash, title, title_norm, title_simhash, published_at, fetched_at, publisher_domain, publisher_name) VALUES (?, 'gdelt', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      params: [aId, url, canonicalUrlHash(url), title.title, normalizeTitle(title.title).join(" "), titleSimHash(title.title).toString(16).padStart(16, "0"), event.first_seen_at, now, title.sourceName || null, title.sourceName || null],
+      params: [aId, url, canonicalUrlHash(url), title.title, normalizeTitle(title.title).join(" "), titleSimHash(title.title).toString(16).padStart(16, "0"), event.first_seen_at, now, publisherOf(title, url), publisherOf(title, url)],
     });
     statements.push({ sql: "INSERT OR IGNORE INTO event_articles (event_id, article_id) SELECT ?, id FROM articles WHERE url_canonical = ?", params: [event.id, url] });
 
@@ -220,7 +253,8 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
   for (const id of touched) {
     const state = active.get(id) as SituationState;
     const prior = newIds.has(id) ? null : await db.first<{ trending_score: number; score_updated_at: string | null; peak_score: number; last_event_at: string; category: EventCategory }>("SELECT trending_score, score_updated_at, peak_score, last_event_at, category FROM situations WHERE id = ?", id);
-    const impulse = impulses.get(id) ?? 0;
+    const publishers = (await db.first<{ n: number }>("SELECT COUNT(DISTINCT a.publisher_domain) AS n FROM situation_events se JOIN event_articles ea ON ea.event_id = se.event_id JOIN articles a ON a.id = ea.article_id WHERE se.situation_id = ?", id))?.n ?? 0;
+    const impulse = [...(arrivals.get(id)?.values() ?? [])].reduce((sum, ev) => sum + eventImpulse(ev, publishers).magnitude, 0);
     const next: ScoreState = prior === null
       ? initialScoreState(state.category, now, impulse)
       : applyImpulse({ score: prior.trending_score, lastUpdatedIso: prior.score_updated_at ?? prior.last_event_at, category: prior.category }, impulse, now);
@@ -228,9 +262,15 @@ export async function ingestBatch(db: Db, input: BatchInput): Promise<BatchResul
       "SELECT a.id, a.title FROM situation_events se JOIN events e ON e.id = se.event_id JOIN event_articles ea ON ea.event_id = e.id JOIN articles a ON a.id = ea.article_id WHERE se.situation_id = ? ORDER BY e.num_mentions DESC, e.first_seen_at DESC LIMIT 1",
       id,
     );
+    // Location is where the MOST-REPORTED event happened, not a mean across events:
+    // one story can be tagged in several countries and the average lands in the ocean.
+    const anchor = await db.first<{ lat: number; lon: number; geo_name: string | null; country_iso: string | null }>(
+      "SELECT e.lat, e.lon, e.geo_name, e.country_iso FROM situation_events se JOIN events e ON e.id = se.event_id WHERE se.situation_id = ? AND e.lat IS NOT NULL ORDER BY e.num_mentions DESC, e.first_seen_at ASC LIMIT 1",
+      id,
+    );
     aggregates.push({
-      sql: "UPDATE situations SET category = ?, lat = ?, lon = ?, last_event_at = ?, event_count = (SELECT COUNT(*) FROM situation_events WHERE situation_id = ?), source_count = ?, trending_score = ?, score_updated_at = ?, peak_score = MAX(peak_score, ?), title = COALESCE(?, title), headline_article_id = COALESCE(?, headline_article_id) WHERE id = ?",
-      params: [state.category, state.centroidLat, state.centroidLon, state.lastEventAt, id, state.sourceCount, next.score, now, next.score, headline?.title ?? null, headline?.id ?? null, id],
+      sql: "UPDATE situations SET category = ?, lat = ?, lon = ?, geo_name = ?, country_iso = ?, last_event_at = ?, event_count = (SELECT COUNT(DISTINCT ea.article_id) FROM situation_events se JOIN event_articles ea ON ea.event_id = se.event_id WHERE se.situation_id = ?), source_count = ?, trending_score = ?, score_updated_at = ?, peak_score = MAX(peak_score, ?), title = COALESCE(?, title), headline_article_id = COALESCE(?, headline_article_id) WHERE id = ?",
+      params: [state.category, anchor?.lat ?? state.centroidLat, anchor?.lon ?? state.centroidLon, anchor?.geo_name ?? null, anchor?.country_iso ?? null, state.lastEventAt, id, publishers, next.score, now, next.score, headline?.title ?? null, headline?.id ?? null, id],
     });
     aggregates.push({
       sql: "INSERT OR REPLACE INTO score_history (situation_id, ts, score, components_json) VALUES (?, ?, ?, ?)",

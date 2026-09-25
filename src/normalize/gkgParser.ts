@@ -1,11 +1,24 @@
 import { canonicalizeUrl } from "./canonicalUrl.js";
 
 /** GKG 2.1 column indexes (tab-separated, 27 columns). */
-const COL = { date: 1, sourceName: 3, url: 4, extras: 26 } as const;
+const COL = { date: 1, sourceName: 3, url: 4, themes: 8, extras: 26 } as const;
+
+/**
+ * GKG topic themes that mark an article as being about a crisis: armed conflict, terrorism,
+ * coercion, or civil unrest. Chosen from themes that actually occur in the feed; the very
+ * broad ones (MANMADE_DISASTER_IMPLIED, WB_2433_CONFLICT_AND_VIOLENCE — on 15-20% of all
+ * articles, including crime and entertainment) are deliberately excluded.
+ */
+export const CRISIS_THEMES: ReadonlySet<string> = new Set([
+  "ARMEDCONFLICT", "MILITARY", "TERROR", "REBELS", "UNREST_BELLIGERENT", "SEIGE", "BLOCKADE",
+  "CEASEFIRE", "WMD", "SANCTIONS", "CYBER_ATTACK", "WB_2462_POLITICAL_VIOLENCE_AND_WAR", "PROTEST",
+]);
 
 export interface GkgTitle {
   title: string;
   sourceName: string;
+  /** The article itself is tagged with at least one crisis theme. */
+  crisis: boolean;
 }
 
 function codePoint(n: number): string {
@@ -37,7 +50,8 @@ export function parseGkgTitles(csv: string): Map<string, GkgTitle> {
     const clean = decodeXmlEntities(title).trim();
     if (clean.length < 8) continue;
     try {
-      titles.set(canonicalizeUrl(url), { title: clean, sourceName: cols[COL.sourceName] ?? "" });
+      const crisis = (cols[COL.themes] ?? "").split(";").some((entry) => CRISIS_THEMES.has(entry.split(",")[0] ?? ""));
+      titles.set(canonicalizeUrl(url), { title: clean, sourceName: cols[COL.sourceName] ?? "", crisis });
     } catch {
       // unparseable URL: skip rather than guess
     }

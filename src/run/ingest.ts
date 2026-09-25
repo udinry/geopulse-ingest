@@ -1,6 +1,7 @@
 import type { Queryable } from "../api/handler.js";
 import { downloadAndExtractCsv, fetchLastUpdatePointers, type GdeltFilePointer } from "../fetch/gdeltEvents.js";
 import { ingestLicensedQuotes } from "../markets/ingest.js";
+import { isGeopoliticallyRelevant } from "../normalize/actorRelevance.js";
 import { parseEventsExport } from "../normalize/gdeltEventParser.js";
 import { mapGdeltEventToEventRow } from "../normalize/mapGdeltEvent.js";
 import { parseGkgTitles } from "../normalize/gkgParser.js";
@@ -13,7 +14,7 @@ const INTERVAL_MS = 15 * 60_000;
 /** Bound one run's work; a backlog drains over the next runs. */
 const MAX_INTERVALS_PER_RUN = 6;
 /** First run (no watermark) looks back this far rather than the whole archive. */
-const FIRST_RUN_LOOKBACK_INTERVALS = 8;
+const FIRST_RUN_LOOKBACK_INTERVALS = 24;
 
 type Db = Queryable & Partial<BatchWriter>;
 
@@ -56,6 +57,7 @@ async function processInterval(db: Db, ts: string, now: string): Promise<BatchRe
   const events: EventRow[] = [];
   const sourceUrls = new Map<string, string>();
   for (const raw of parsed.rows) {
+    if (!isGeopoliticallyRelevant(raw)) continue;
     const event = mapGdeltEventToEventRow(raw);
     if (event === null) continue;
     events.push(event);
