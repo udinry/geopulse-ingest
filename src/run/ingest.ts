@@ -1,6 +1,7 @@
 import type { Queryable } from "../api/handler.js";
 import { downloadAndExtractCsv, fetchLastUpdatePointers, type GdeltFilePointer } from "../fetch/gdeltEvents.js";
 import { ingestLicensedQuotes } from "../markets/ingest.js";
+import { fetchOutlookCandidates, storeAndLinkOutlook } from "../outlook/fetchMarkets.js";
 import { isGeopoliticallyRelevant } from "../normalize/actorRelevance.js";
 import { parseEventsExport } from "../normalize/gdeltEventParser.js";
 import { mapGdeltEventToEventRow } from "../normalize/mapGdeltEvent.js";
@@ -106,6 +107,16 @@ export async function runIngest(db: Db, options: IngestOptions = {}): Promise<Re
     const quoteOptions = options.eiaAPIKey === undefined ? {} : { eiaAPIKey: options.eiaAPIKey };
     counts.quotes = await ingestLicensedQuotes(db, { now: () => startedAt, ...quoteOptions });
     log(`stored ${counts.quotes} quotes`);
+
+    // The outlook source is not reachable from every network (it is blocked in India, for
+    // one), so a failure here must never fail the whole run.
+    try {
+      counts.outlook = await storeAndLinkOutlook(db, await fetchOutlookCandidates(), startedAt);
+      log(`outlook: ${JSON.stringify(counts.outlook)}`);
+    } catch (error) {
+      counts.outlookError = String(error).slice(0, 160);
+      log(`outlook skipped: ${counts.outlookError}`);
+    }
 
     counts.lastInterval = lastDone;
     await db.run("UPDATE ingest_runs SET status = 'success', finished_at = ?, counts_json = ? WHERE id = ?", new Date().toISOString(), JSON.stringify(counts), runId);
