@@ -75,7 +75,7 @@ async function loadSituation(env: APIEnvironment, id: string, regionISO: string 
   return {
     ...buildNowSnapshot({ generatedAt: env.now?.() ?? new Date().toISOString(), situations: [situation], assets: [], latestQuotes: new Map() }).situations[0],
     events: events.map((event) => ({ ...event, quadClass: event.quad_class, actor1Name: event.actor1_name, actor2Name: event.actor2_name, geoName: event.geo_name, occurredAt: event.occurred_at, numMentions: event.num_mentions, numSources: event.num_sources })),
-    news: news.filter((article) => article.published_at !== null).map((article) => ({ id: article.id, sourceName: article.source_name, headline: article.title, excerpt: article.excerpt, publishedAt: article.published_at, url: article.url_canonical })),
+    news: news.filter((article) => article.published_at !== null).map((article) => ({ id: article.id, sourceName: article.publisher_name ?? article.publisher_domain ?? article.source_name, headline: article.title, excerpt: article.excerpt, publishedAt: article.published_at, url: article.url_canonical })),
     outlook: outlookRows.map((market) => { const link = linksByMarket.get(market.id); return link === undefined ? null : serializeOutlook(market, link); }).filter((outlook) => outlook !== null),
     assets: [],
     companies: linkCompanies(situation),
