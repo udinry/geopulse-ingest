@@ -2,6 +2,7 @@ import { handleRequest, type APIEnvironment, type Queryable } from "./handler.js
 import { dispatchAlerts, type APNsSender } from "../alerts/dispatch.js";
 import { dispatchWatchImpacts } from "../alerts/watchImpact.js";
 import { APNsHTTPClient } from "../alerts/apns.js";
+import { isIngestTick, triggerIngest } from "./triggerIngest.js";
 
 interface D1StatementLike {
   bind(...bindings: unknown[]): D1StatementLike;
@@ -23,6 +24,9 @@ export interface WorkerEnvironment {
   APNS_TOPIC?: string;
   APNS_SANDBOX?: string;
   OPS_KEY?: string;
+  /** Optional fine-grained GitHub token (Actions: write on the ingest repo) so this cron can trigger ingestion. */
+  GH_DISPATCH_TOKEN?: string;
+  GH_REPO?: string;
 }
 
 function queryAdapter(db: D1DatabaseLike): Queryable {
@@ -50,13 +54,22 @@ export default {
     return handleRequest(request, apiEnvironment);
   },
   async scheduled(_event: unknown, env: WorkerEnvironment): Promise<void> {
+    const db = queryAdapter(env.DB);
     const sender = env.APNsSender ?? (env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_PRIVATE_KEY && env.APNS_TOPIC
       ? new APNsHTTPClient({ keyID: env.APNS_KEY_ID, teamID: env.APNS_TEAM_ID, privateKeyPEM: env.APNS_PRIVATE_KEY, topic: env.APNS_TOPIC, sandbox: env.APNS_SANDBOX === "true" })
       : undefined);
-    if (sender === undefined) return;
-    const db = queryAdapter(env.DB);
-    const now = new Date().toISOString();
-    await dispatchAlerts(db, sender, now);
-    await dispatchWatchImpacts(db, sender, now);
+    const now = new Date();
+    // Alerts come first: they are the time-sensitive work and share this invocation's tiny CPU budget.
+    if (sender !== undefined) {
+      await dispatchAlerts(db, sender, now.toISOString());
+      await dispatchWatchImpacts(db, sender, now.toISOString());
+    }
+    // Best-effort housekeeping: none of it may fail the run.
+    try {
+      if (now.getUTCMinutes() < 5) await db.run("DELETE FROM asset_prices WHERE ts < ?", new Date(now.getTime() - 30 * 86_400_000).toISOString());
+      if (env.GH_DISPATCH_TOKEN && isIngestTick(now)) await triggerIngest(env.GH_DISPATCH_TOKEN, env.GH_REPO ?? "udinry/geopulse-ingest");
+    } catch (error) {
+      console.error("scheduled housekeeping failed", error);
+    }
   },
 };

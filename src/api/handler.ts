@@ -1,8 +1,9 @@
-import type { ArticleRow, AssetPriceRow, AssetRow, EventRow, OutlookMarketRow, SituationOutlookRow, SituationRow } from "../shared/types.js";
+import type { ArticleRow, AssetPriceRow, AssetRow, EventCategory, EventRow, OutlookMarketRow, SituationOutlookRow, SituationRow } from "../shared/types.js";
 import { randomUUID } from "node:crypto";
 import { buildNowSnapshot, encodeSnapshot, type NowSnapshot } from "../emit/snapshot.js";
 import { serializeAsset, serializeAssetSearchResult, serializeOutlook, serializeSearchResult } from "../emit/publicSerializer.js";
 import { isOutlookEnabled } from "../outlook/controls.js";
+import { linkAssets } from "../link/assetLinks.js";
 import { COMPANIES, linkCompanies, quoteURL } from "../link/companyLinks.js";
 import { WATCHABLE_ASSETS } from "../link/assetLinks.js";
 import { setManualOutlookLink, setOutlookKillSwitch } from "../outlook/controls.js";
@@ -58,6 +59,29 @@ async function loadNow(env: APIEnvironment, generatedAt: string): Promise<NowSna
   return buildNowSnapshot({ generatedAt, situations, assets, latestQuotes });
 }
 
+type PublicAssetView = ReturnType<typeof serializeAsset>;
+
+/** Green (licensed-for-display) assets with their latest quote; a missing change is derived from the previous day only when one exists. */
+async function loadMarketAssets(env: APIEnvironment, now: string): Promise<PublicAssetView[]> {
+  const assets = await env.db.all<AssetRow>("SELECT id, symbol, name, class, currency, license_class, is_delayed, delay_minutes FROM assets WHERE license_class = 'green' ORDER BY symbol ASC");
+  // Only the two newest observations per asset are needed: the latest quote, and (for sources that publish no
+  // change of their own, e.g. ECB/EIA daily rates) the previous one to derive an honest day-on-day change.
+  const quotes = await env.db.all<AssetPriceRow & { rn: number }>(
+    "SELECT asset_id, ts, price, change_pct, as_of, session_state, rn FROM (SELECT asset_id, ts, price, change_pct, as_of, session_state, ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY ts DESC) AS rn FROM asset_prices WHERE ts >= ? AND asset_id IN (SELECT id FROM assets WHERE license_class = 'green')) WHERE rn <= 2",
+    new Date(Date.parse(now) - 14 * 86_400_000).toISOString(),
+  );
+  const latestQuotes = new Map(quotes.filter((quote) => quote.rn === 1).map((quote) => [quote.asset_id, quote]));
+  const previousQuotes = new Map(quotes.filter((quote) => quote.rn === 2).map((quote) => [quote.asset_id, quote]));
+  const withChange = (assetId: string): AssetPriceRow | null => {
+    const latest = latestQuotes.get(assetId);
+    if (latest === undefined) return null;
+    const previous = previousQuotes.get(assetId);
+    if (latest.change_pct !== null || previous === undefined || previous.price === 0) return latest;
+    return { ...latest, change_pct: ((latest.price - previous.price) / previous.price) * 100 };
+  };
+  return assets.map((asset) => serializeAsset(asset, withChange(asset.id)));
+}
+
 async function loadSituation(env: APIEnvironment, id: string, regionISO: string | null): Promise<Record<string, unknown> | null> {
   const situation = await env.db.first<SituationRow>(
     "SELECT id, title, category, lat, lon, geo_name, country_iso, status, first_seen_at, last_event_at, trending_score, event_count, source_count, map_rank FROM situations WHERE id = ?",
@@ -72,12 +96,19 @@ async function loadSituation(env: APIEnvironment, id: string, regionISO: string 
     outlookEnabled ? env.db.all<SituationOutlookRow>("SELECT * FROM situation_outlook WHERE situation_id = ?", id) : Promise.resolve([]),
   ]);
   const linksByMarket = new Map(outlookLinks.map((link) => [link.market_id, link]));
+  const now = env.now?.() ?? new Date().toISOString();
+  const marketBySymbol = new Map((await loadMarketAssets(env, now)).map((asset) => [asset.symbol, asset]));
+  const impactedAssets = linkAssets(situation).flatMap((link) => {
+    const asset = marketBySymbol.get(link.symbol);
+    return asset === undefined ? [] : [{ ...asset, rationale: link.rationale }];
+  });
   return {
     ...buildNowSnapshot({ generatedAt: env.now?.() ?? new Date().toISOString(), situations: [situation], assets: [], latestQuotes: new Map() }).situations[0],
     events: events.map((event) => ({ ...event, quadClass: event.quad_class, actor1Name: event.actor1_name, actor2Name: event.actor2_name, geoName: event.geo_name, occurredAt: event.occurred_at, numMentions: event.num_mentions, numSources: event.num_sources })),
     news: news.filter((article) => article.published_at !== null).map((article) => ({ id: article.id, sourceName: article.publisher_name ?? article.publisher_domain ?? article.source_name, headline: article.title, excerpt: article.excerpt, publishedAt: article.published_at, url: article.url_canonical })),
     outlook: outlookRows.map((market) => { const link = linksByMarket.get(market.id); return link === undefined ? null : serializeOutlook(market, link); }).filter((outlook) => outlook !== null),
     assets: [],
+    impactedAssets,
     companies: linkCompanies(situation),
   };
 }
@@ -222,17 +253,51 @@ export async function handleRequest(request: Request, env: APIEnvironment): Prom
       return jsonResponse({ query, sections: { situations: results.map(serializeSearchResult), assets: assets.map((asset) => serializeAssetSearchResult(asset, 1)), companies: searchCompanies(query) } }, request);
     }
     if (url.pathname === "/v1/markets") {
-      const assets = await env.db.all<AssetRow>("SELECT id, symbol, name, class, currency, license_class, is_delayed, delay_minutes FROM assets WHERE license_class = 'green' ORDER BY symbol ASC");
-      const quotes = await env.db.all<AssetPriceRow & { rn: number }>(
-        "SELECT asset_id, ts, price, change_pct, as_of, session_state, ROW_NUMBER() OVER (PARTITION BY asset_id ORDER BY ts DESC) AS rn FROM asset_prices WHERE asset_id IN (SELECT id FROM assets WHERE license_class = 'green')",
+      const now = env.now?.() ?? new Date().toISOString();
+      return jsonResponse({ generatedAt: now, assets: await loadMarketAssets(env, now) }, request);
+    }
+    if (url.pathname === "/v1/markets/history") {
+      const now = env.now?.() ?? new Date().toISOString();
+      const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? "7") || 7, 1), 30);
+      const rows = await env.db.all<{ symbol: string; ts: string; price: number }>(
+        "SELECT a.symbol AS symbol, p.ts AS ts, p.price AS price FROM asset_prices p JOIN assets a ON a.id = p.asset_id WHERE a.license_class = 'green' AND p.ts >= ? ORDER BY a.symbol ASC, p.ts ASC",
+        new Date(Date.parse(now) - days * 86_400_000).toISOString(),
       );
-      const latestQuotes = new Map(quotes.filter((quote) => quote.rn === 1).map((quote) => [quote.asset_id, quote]));
-      return jsonResponse({ generatedAt: env.now?.() ?? new Date().toISOString(), assets: assets.map((asset) => serializeAsset(asset, latestQuotes.get(asset.id) ?? null)) }, request);
+      const bySymbol = new Map<string, { ts: string; price: number }[]>();
+      for (const row of rows) {
+        const list = bySymbol.get(row.symbol) ?? [];
+        list.push({ ts: row.ts, price: row.price });
+        bySymbol.set(row.symbol, list);
+      }
+      return jsonResponse({ generatedAt: now, days, series: [...bySymbol].map(([symbol, points]) => ({ symbol, points: downsample(points, 96) })) }, request);
+    }
+    if (url.pathname === "/v1/markets/impact") {
+      // What the currently visible situations may affect, by the same named rules that drive push notifications.
+      const situations = await env.db.all<{ id: string; title: string; category: EventCategory; geo_name: string | null; last_event_at: string; source_count: number }>(
+        "SELECT id, title, category, geo_name, last_event_at, source_count FROM situations WHERE status = 'active' AND map_rank IS NOT NULL ORDER BY map_rank ASC",
+      );
+      const items = situations.map((situation) => ({
+        situationID: situation.id,
+        title: situation.title,
+        category: situation.category,
+        lastEventAt: situation.last_event_at,
+        sourceCount: situation.source_count,
+        assets: linkAssets(situation).map(({ symbol, name, rationale }) => ({ symbol, name, rationale })),
+        companies: linkCompanies(situation, 4),
+      })).filter((item) => item.assets.length > 0 || item.companies.length > 0);
+      return jsonResponse({ generatedAt: env.now?.() ?? new Date().toISOString(), items }, request);
     }
     return errorResponse("not found", 404, request);
   } catch (error) {
     return errorResponse(error instanceof Error ? error.message : "internal error", 500, request);
   }
+}
+
+/** Evenly thins a series to at most `limit` points, always keeping the first and the newest. */
+function downsample<T>(points: T[], limit: number): T[] {
+  if (points.length <= limit) return points;
+  const step = (points.length - 1) / (limit - 1);
+  return Array.from({ length: limit }, (_, index) => points[Math.round(index * step)] as T);
 }
 
 export { etag };
